@@ -1,3 +1,20 @@
+# [ZEROSIGN Project]
+data/
+.mp4
+.avi
+.mov
+.mkv
+
+.pth 
+.pt
+.npy
+.npz
+
+.zip
+.tar
+.tar.gz
+.rar
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]
