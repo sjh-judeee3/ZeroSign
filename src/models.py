@@ -1,6 +1,9 @@
 """
 models.py
 
+Gets Video input frames and generate one vector
+Compare the vector to known prototypes and calculate the closest prototype
+
 """
 
 import torch
@@ -10,6 +13,10 @@ import torch.nn.functional as F
 class TemporalAttentionPooling(nn.Module):
     """
     Attention Pooling layer that compresses Frame Sequence into a single vector
+    역할: 프렘임별로 중요한 정도가 다르기 떄문에 가중치를 계산해서 중요도에 따라 합침
+    
+    Input: [Batch size, Frame number, Feature dimension]
+    Output: [Batch size, Feature Diemnsion] -> 프레임 차원 사라짐
     """
     def __init__(self, input_dim):
         super().__init__()
@@ -31,8 +38,15 @@ class TemporalAttentionPooling(nn.Module):
 class HybridTemporalModel(nn.Module):
     """
     [Structure]
-    Input (SLIP Embeddings) -> Positional Encoding -> 
-    Transformer Encoder (1-layer) -> Temporal Attention Pooling -> Output
+    Input (SLIP Embeddings): x = [Batch, Frame, Dimension]
+    -> Positional Encoding
+    -> Transformer Encoder (1-layer): Context를 훑어봄
+    -> Temporal Attention Pooling: 압축
+    -> Output: video_emb = 영상 전체를 표현하는 최종 임베딩 [Batch, Dim]
+    
+    역할: SLIP에서 나온 단순 Image feature 을 받아서 이전 동작과 다음 동작 사이의 맥락을 파악함
+
+    
     """
     def __init__(self, input_dim=512, hidden_dim=512, n_heads=8, dropout=0.1):
         super().__init__()
@@ -66,6 +80,20 @@ class HybridTemporalModel(nn.Module):
 class ProtoNetClassifier(nn.Module):
     """
     Prototypical Network Head for Zero-Shot/Few-shot
+    
+    역할: 학습된 Support(예시)와 얼마나 비슷한지 거리를 잼
+    
+    작동 원리:
+        Support Set: 같은 레이블로 학습된 데이터의 Prototype 저장
+        Query Set: 새로 들어온 데이터의 Prototype 계산
+        Distance: Prototype 간의 Euclidean Distance 계산
+        
+    Input:
+        support_emb: 참고할 데이터들의 임베딩 [N*K, Dim]
+        query_emb: 맞춰야 할 문제 데이터들의 임베딩 [N*Q, Dim]
+        
+    Output:
+        logits: 거리값의 음수, 값이 클수록(가까울수록) 정답일 확률이 높음
     """
     def __init__(self):
         super().__init__()
