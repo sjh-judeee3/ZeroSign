@@ -4,6 +4,22 @@ models.py
 Gets Video input frames and generate one vector
 Compare the vector to known prototypes and calculate the closest prototype
 
+N (N-way):
+    클래스 개수
+    즉, 몇개의 수어 단어를 구분할 것인지?
+    classifier 호출 시 n_classes = int
+
+K (K-Shot):
+    서포트 샘플 수 (Support)
+    각 단어마다 정답 예시를 몇 개 보여줄 것인지
+    support_emb 개수에 포함
+    
+Q (Query): 
+    쿼리 샘플 수
+    맞춰야 할 문제(영상, 제스처)가 몇 개인가?
+    Q = int(batch size)
+    features의 배치 크기가 곧 Query의 개수임    
+
 """
 
 import torch
