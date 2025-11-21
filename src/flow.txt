@@ -1,0 +1,17 @@
+
+
+
+전체 Flow
+
+SLIP (Encoder): 영상 프레임마다 특징을 뽑음 (이미지 → 벡터 나열)
+
+    Input: 비디오 영상
+    Output: 프레임별 특징들 (예: 50장의 프레임에 대한 각각의 벡터)
+
+HybridTemporalModel (Time): 시간 순서를 이해하고 하나로 요약함
+    Output: 비디오 전체를 대표하는 single vector
+
+ProtoNetClassifier (Judge): 기준점(Prototype)과 비교해서 정답을 맞힘
+    Output: 각 단어일 확률 (Logits)
+
+
