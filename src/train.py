@@ -1,4 +1,4 @@
-## SLIP.py 끝나면 DummyResNetEncoder 대체
+## SLIP.py 끝나면 DummyResNetEncoder 대체하기
 
 import os
 import json
@@ -13,13 +13,12 @@ import torchvision.models as models_vision
 from src.dataset import SignLanguageDataset
 from src.models import HybridTemporalModel, ProtoNetClassifier
 
-# ====================================================
-# [1] 임시 인코더 (A팀의 SLIP이 오기 전까지 대타)
-# ====================================================
+
+# [1] 임시 인코더
+
 class DummyResNetEncoder(nn.Module):
     """
-    SLIP 대신 이미지를 받아서 512차원 특징을 뽑아주는 임시 모델입니다.
-    나중에 A팀이 만든 SLIP Encoder로 교체하면 됩니다.
+    SLIP 대신 이미지를 받아서 512차원 특징을 뽑아주는 임시 모델\
     """
     def __init__(self):
         super().__init__()
@@ -44,14 +43,14 @@ class DummyResNetEncoder(nn.Module):
         # 다시 시간 축 복구: [Batch, Frames, 512]
         return feat.view(batch, frames, -1)
 
-# ====================================================
+
 # [2] 유틸리티: 라벨 사전 만들기 & 배치 샘플링
-# ====================================================
+
 def build_label_map(label_dir):
     """
     JSON 파일들을 읽어서 {파일명: 라벨인덱스} 사전을 만듭니다.
     """
-    print(f"📂 라벨 데이터 읽는 중... ({label_dir})")
+    print(f" 라벨 데이터 읽는 중... ({label_dir})")
     video_to_label = {}
     label_to_idx = {}
     
