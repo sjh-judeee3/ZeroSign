@@ -14,7 +14,7 @@ from models import HybridTemporalModel, ProtoNetClassifier
 # ====================================================
 # [설정] 경로 및 파라미터
 # ====================================================
-LABEL_DIR = "/content/drive/MyDrive/Capstone/수어영상2/labels_01"
+LABEL_DIR = "/content/drive/MyDrive/Capstone/morpheme/01"
 VIDEO_DIR = "/content/drive/MyDrive/Capstone/fin_videos_extracted"
 
 MAX_EPISODES = 100  
