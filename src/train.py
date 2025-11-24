@@ -1,130 +1,146 @@
 import os
 import random
 import torch
+import torch.nn as nn
 import torch.optim as optim
-from torch.utils.data import DataLoader
 from torchvision import transforms
 from tqdm import tqdm
 
-# ✅ 우리가 만든 파일들과 정확히 매칭되는 임포트
+# ✅ 모듈 임포트 (파일명 정확히 확인!)
 from dataset import SignLanguageDataset
-from models import SLIP_ProtoNet
+from encoder import SLIPVideoEncoder 
+from models import HybridTemporalModel, ProtoNetClassifier
 
 # ====================================================
-# [설정] 경로를 정확히 수정했습니다!
+# [설정] 경로 및 파라미터
 # ====================================================
 LABEL_DIR = "/content/drive/MyDrive/Capstone/수어영상2/labels_01"
 VIDEO_DIR = "/content/drive/MyDrive/Capstone/fin_videos_extracted"
 
-MAX_EPISODES = 100  # 테스트용 (나중엔 10000 이상으로 늘리세요)
+MAX_EPISODES = 100  
 N_WAY = 5           # 5지 선다
 K_SHOT = 1          # 정답지 1개
 Q_QUERY = 1         # 문제 1개
-LR = 0.001          # 학습률
+LR = 1e-4           # 학습률 (Transformer라 조금 낮춤)
+
+def get_episodic_batch(label_to_indices, dataset, n_way, k_shot, q_query):
+    """에피소드(N-way K-shot) 배치를 생성하는 함수"""
+    # 1. N개의 클래스 랜덤 선택
+    valid_labels = [l for l, idxs in label_to_indices.items() if len(idxs) >= k_shot + q_query]
+    if len(valid_labels) < n_way: return None, None, None, None
+    
+    selected_classes = random.sample(valid_labels, n_way)
+    
+    support_imgs, query_imgs = [], []
+    support_labels, query_labels = [], []
+    
+    for i, class_label in enumerate(selected_classes):
+        indices = label_to_indices[class_label]
+        selected_indices = random.sample(indices, k_shot + q_query)
+        
+        # Support Set
+        for idx in selected_indices[:k_shot]:
+            img, _ = dataset[idx]
+            support_imgs.append(img)
+            support_labels.append(i)
+            
+        # Query Set
+        for idx in selected_indices[k_shot:]:
+            img, _ = dataset[idx]
+            query_imgs.append(img)
+            query_labels.append(i)
+            
+    return torch.stack(support_imgs), torch.tensor(support_labels), \
+           torch.stack(query_imgs), torch.tensor(query_labels)
 
 def train():
-    # 1. 디바이스 설정 (GPU/MPS/CPU)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    if torch.backends.mps.is_available(): device = torch.device("mps")
     print(f"🚀 학습 시작! Device: {device}")
 
-    # 2. 데이터셋 준비
-    print("📂 데이터셋 로드 중...")
+    # 1. 데이터셋 준비
     transform = transforms.Compose([
         transforms.Resize((224, 224)),
         transforms.ToTensor()
     ])
+    dataset = SignLanguageDataset(LABEL_DIR, VIDEO_DIR, transform=transform)
     
-    # [수정] label_dir, video_dir 두 개를 넣어야 합니다!
-    dataset = SignLanguageDataset(label_dir=LABEL_DIR, video_dir=VIDEO_DIR, transform=transform)
-    
-    # 3. Few-shot을 위한 라벨별 인덱스 정리
-    print("📊 데이터를 라벨별로 분류 중... (시간이 좀 걸립니다)")
+    # 인덱싱 (속도 최적화)
+    print("📊 데이터 분류 중...")
     label_to_indices = {}
-    
-    # tqdm으로 진행상황 표시
     for idx in tqdm(range(len(dataset))):
         try:
-            # 데이터셋 내부 리스트에 접근해서 라벨만 빠르게 추출
-            # (__getitem__을 쓰면 영상을 읽어서 느려짐 -> 최적화)
             import json
             with open(dataset.json_paths[idx], 'r', encoding='utf-8') as f:
-                meta = json.load(f)
-                label = meta['data'][0]['attributes'][0]['name']
-            
-            if label not in label_to_indices:
-                label_to_indices[label] = []
+                label = json.load(f)['data'][0]['attributes'][0]['name']
+            if label not in label_to_indices: label_to_indices[label] = []
             label_to_indices[label].append(idx)
-        except:
-            continue
+        except: continue
 
-    # 데이터가 너무 적은 클래스 제외
-    min_samples = K_SHOT + Q_QUERY
-    valid_labels = [lbl for lbl, idxs in label_to_indices.items() if len(idxs) >= min_samples]
-    print(f"✅ 학습 가능 단어 수: {len(valid_labels)}개 (총 라벨 {len(label_to_indices)}개 중)")
-
-    if len(valid_labels) < N_WAY:
-        print(f"❌ 에러: N_WAY({N_WAY})보다 학습 가능한 단어 수가 적습니다.")
-        return
-
-    # 4. 모델 준비 (SLIP_ProtoNet 하나로 해결)
-    model = SLIP_ProtoNet(pretrained=True).to(device)
-    optimizer = optim.Adam(model.parameters(), lr=LR)
+    # 2. 모델 초기화 (3단 합체!)
+    # (A) Encoder: 이미지 -> 프레임별 특징 (B, T, 512)
+    encoder = SLIPVideoEncoder(pretrained=True, embed_dim=512).to(device)
     
-    model.train()
+    # (B) Temporal: 프레임별 특징 -> 비디오 벡터 (B, 512)
+    # models.py의 HybridTemporalModel 사용
+    temporal_model = HybridTemporalModel(input_dim=512, hidden_dim=512).to(device)
+    
+    # (C) Classifier: 비디오 벡터 -> 거리 계산 & 분류
+    classifier = ProtoNetClassifier().to(device)
+    
+    # Optimizer (Encoder와 Temporal 모델 둘 다 학습)
+    optimizer = optim.Adam(
+        list(encoder.parameters()) + list(temporal_model.parameters()), 
+        lr=LR
+    )
 
-    # 5. 학습 루프 (Episode Training)
+    # 3. 학습 루프
     print("🔥 Training Loop Start...")
+    model_save_path = "slip_protonet_final.pth"
+    
     for episode in range(MAX_EPISODES):
+        # 배치 생성
+        s_imgs, s_lbls, q_imgs, q_lbls = get_episodic_batch(
+            label_to_indices, dataset, N_WAY, K_SHOT, Q_QUERY
+        )
+        
+        if s_imgs is None: 
+            print("❌ 학습 가능한 데이터가 부족합니다."); break
+
+        s_imgs, s_lbls = s_imgs.to(device), s_lbls.to(device)
+        q_imgs, q_lbls = q_imgs.to(device), q_lbls.to(device)
+
         optimizer.zero_grad()
-        
-        # (1) 이번 에피소드용 샘플링
-        sampled_classes = random.sample(valid_labels, N_WAY)
-        
-        support_imgs = []
-        query_imgs = []
-        target_labels = [] 
 
-        for i, class_label in enumerate(sampled_classes):
-            indices = label_to_indices[class_label]
-            # 중복 없이 K+Q개 뽑기
-            selected_indices = random.sample(indices, K_SHOT + Q_QUERY)
-            
-            # Support Set
-            for idx in selected_indices[:K_SHOT]:
-                img, _ = dataset[idx]
-                support_imgs.append(img)
-                
-            # Query Set
-            for idx in selected_indices[K_SHOT:]:
-                img, _ = dataset[idx]
-                query_imgs.append(img)
-                target_labels.append(i) # 0~4 사이 정답 라벨
-
-        # 텐서 합치기 & 이동
-        support_imgs = torch.stack(support_imgs).to(device)
-        query_imgs = torch.stack(query_imgs).to(device)
-        target_labels = torch.tensor(target_labels).to(device)
-
-        # (2) 모델 예측 (Forward)
-        # SLIP_ProtoNet이 내부에서 인코딩 -> 프로토타입 생성 -> 거리 계산까지 다 해줍니다.
-        log_probs = model(support_imgs, query_imgs, N_WAY, K_SHOT)
+        # --- Forward Pass (모델 연결) ---
+        # 1. Encoder (Frame Features)
+        s_features = encoder(s_imgs) # Output: (N*K, T, 512)
+        q_features = encoder(q_imgs) # Output: (N*Q, T, 512)
         
-        # (3) Loss 계산 & 업데이트
-        loss = torch.nn.functional.nll_loss(log_probs, target_labels)
+        # 2. Temporal Model (Video Embedding)
+        s_emb = temporal_model(s_features) # Output: (N*K, 512)
+        q_emb = temporal_model(q_features) # Output: (N*Q, 512)
+        
+        # 3. ProtoNet Classifier
+        # Output: Logits (음수 거리값)
+        logits = classifier(s_emb, s_lbls, q_emb, N_WAY)
+        
+        # --- Loss & Update ---
+        loss = torch.nn.functional.cross_entropy(logits, q_lbls)
         loss.backward()
         optimizer.step()
 
-        # (4) 정확도 출력
-        y_pred = log_probs.argmax(1)
-        acc = (y_pred == target_labels).float().mean()
+        # 정확도
+        acc = (logits.argmax(1) == q_lbls).float().mean()
 
         if (episode + 1) % 10 == 0:
             print(f"Episode [{episode+1}/{MAX_EPISODES}] Loss: {loss.item():.4f} | Acc: {acc.item()*100:.2f}%")
 
     print("🎉 학습 완료!")
-    # 모델 저장
-    torch.save(model.state_dict(), "slip_protonet_final.pth")
+    # 모델 저장 (Encoder와 Temporal 둘 다 저장해야 함)
+    torch.save({
+        'encoder': encoder.state_dict(),
+        'temporal': temporal_model.state_dict()
+    }, model_save_path)
 
 if __name__ == "__main__":
     train()
