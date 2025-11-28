@@ -95,7 +95,16 @@ def train():
 
     # 3. 학습 루프
     print("🔥 Training Loop Start...")
-    model_save_path = "slip_protonet_final.pth"
+    model_save_path = "/content/drive/MyDrive/Capstone/slip_protonet_final.pth"
+    save_dir = os.path.dirname(model_save_path) # 파일명 빼고 폴더 경로만 추출
+    
+    if os.path.exists(save_dir):
+        print(f"✅ 저장 경로 확인 완료! 안심하세요.")
+        print(f"📂 저장 폴더: {save_dir}")
+        print(f"💾 파일명: {os.path.basename(model_save_path)}")
+    else:
+        print(f"🚨 [비상] 저장 폴더가 없습니다!!! 경로를 확인하세요: {save_dir}")
+        return
     
     for episode in range(MAX_EPISODES):
         # 배치 생성
@@ -141,6 +150,7 @@ def train():
         'encoder': encoder.state_dict(),
         'temporal': temporal_model.state_dict()
     }, model_save_path)
+    print(f"✅ 구글 드라이브에 저장 완료! 경로: {model_save_path}")
 
 if __name__ == "__main__":
     train()
