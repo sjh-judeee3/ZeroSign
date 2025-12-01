@@ -18,7 +18,6 @@
 # eval data
 eval_data/
 eval_data_resized/
-checkpoint/
 test_run.py
 
 
