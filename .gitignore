@@ -18,6 +18,8 @@
 # eval data
 eval_data/
 eval_data_resized/
+checkpoint/
+test_run.py
 
 
 # Byte-compiled / optimized / DLL files
