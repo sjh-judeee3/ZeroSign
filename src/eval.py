@@ -10,20 +10,21 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 
 # ✅ 사용자 정의 모듈 임포트
-# (파일 구조가 src/encoder_test.py, src/models.py 라고 가정)
+# (파일 구조가 src/encoder.py, src/models.py 라고 가정)
 try:
-    from src.encoder_test import SLIPVisualEncoder
+    from src.encoder import SLIPVideoEncoder 
     from src.models import HybridTemporalModel, ProtoNetClassifier
 except ImportError:
     # src 폴더 내부에서 실행할 경우
-    from encoder_test import SLIPVisualEncoder
+    from encoder import SLIPVideoEncoder
     from models import HybridTemporalModel, ProtoNetClassifier
 
 # --- [설정] ---
 DATA_ROOT = "eval_data_resized"       # 전처리된 데이터 폴더
 CHECKPOINT_PATH = "checkpoints/slip_protonet_final.pth" # 학습된 가중치 경로
-N_SUPPORT = 3                         # 클래스당 기준 영상 개수 (Few-shot Support)
-NUM_FRAMES = 16                       # 모델이 학습할 때 썼던 프레임 수
+N_SUPPORT = 3                         # 클래스당 기준 영상 개수
+NUM_FRAMES = 16                       # 학습 때 사용한 프레임 수
+EMBED_DIM = 512                       # train.py의 embed_dim과 일치해야 함
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 if torch.backends.mps.is_available(): DEVICE = "mps" # 맥북용
 
@@ -75,14 +76,14 @@ def load_video_tensor(video_path, num_frames=16):
     return torch.tensor(frames).unsqueeze(0) # Batch 차원 추가 [1, C, T, H, W]
 
 # ==========================================
-# 2. 모델 로드 및 가중치 복원
+# 2. 모델 로드 및 가중치 복원 (train.py 방식 반영)
 # ==========================================
 def load_trained_models():
     print(f"🔄 Loading models on {DEVICE}...")
     
-    # 모델 초기화
-    encoder = SLIPVisualEncoder(model_name='vit_base_patch16_224').to(DEVICE)
-    time_model = HybridTemporalModel(input_dim=encoder.output_dim).to(DEVICE) # output_dim=768
+    # 모델 초기화 (train.py의 파라미터와 동일하게!)
+    encoder = SLIPVideoEncoder(pretrained=False, embed_dim=EMBED_DIM).to(DEVICE)
+    time_model = HybridTemporalModel(input_dim=EMBED_DIM, hidden_dim=EMBED_DIM).to(DEVICE)
     
     # 체크포인트 로드
     if not os.path.exists(CHECKPOINT_PATH):
@@ -90,25 +91,20 @@ def load_trained_models():
         
     checkpoint = torch.load(CHECKPOINT_PATH, map_location=DEVICE)
     
-    # 저장 방식에 따라 분기 처리
-    # Case 1: {'encoder': ..., 'time_model': ...} 딕셔너리로 저장된 경우 (권장)
-    if isinstance(checkpoint, dict) and 'encoder_state_dict' in checkpoint:
-        print("✅ Detected dictionary checkpoint format.")
-        encoder.load_state_dict(checkpoint['encoder_state_dict'])
-        time_model.load_state_dict(checkpoint['time_model_state_dict'])
-        
-    # Case 2: 모델 전체가 저장된 경우 or 다른 키값
-    else:
-        print("⚠️ Warning: Unknown checkpoint format. Trying direct load...")
-        # 만약 키 값이 다르다면 아래를 수정해야 합니다. 
-        # 예: checkpoint['model'] 등. 
-        # 지금은 에러가 날 수 있으니 일단 패스하거나 사용자 확인 필요.
-        try:
-            encoder.load_state_dict(checkpoint['encoder']) # 키 이름 추측
-            time_model.load_state_dict(checkpoint['hybrid'])
-        except:
-            print("❌ 가중치 로드 실패. train.py에서 저장 방식을 확인해주세요.")
-            print(f"Available keys: {checkpoint.keys() if isinstance(checkpoint, dict) else 'Not a dict'}")
+    # train.py에서 저장한 키: 'encoder', 'temporal'
+    print(f"✅ Checkpoint Keys Found: {list(checkpoint.keys())}")
+    
+    try:
+        encoder.load_state_dict(checkpoint['encoder'])
+        time_model.load_state_dict(checkpoint['temporal'])
+        print("✅ Weights loaded successfully!")
+    except KeyError as e:
+        print(f"❌ Key Error loading checkpoint: {e}")
+        print("train.py의 저장 코드와 키 값이 일치하는지 확인하세요.")
+        return None, None
+    except Exception as e:
+        print(f"❌ Error loading weights: {e}")
+        return None, None
 
     encoder.eval()
     time_model.eval()
@@ -116,11 +112,12 @@ def load_trained_models():
     return encoder, time_model
 
 # ==========================================
-# 3. 평가 실행 (ProtoNet Logic)
+# 3. 평가 실행
 # ==========================================
 def run_evaluation():
     # 1. 모델 준비
     encoder, time_model = load_trained_models()
+    if encoder is None: return
     
     # 2. 클래스 탐색
     classes = sorted([d for d in os.listdir(DATA_ROOT) if os.path.isdir(os.path.join(DATA_ROOT, d))])
@@ -129,9 +126,9 @@ def run_evaluation():
     support_embs = []
     support_lbls = []
     query_embs = []
-    query_lbls = [] # 정답지
+    query_lbls = [] 
 
-    print("\n🚀 Extracting Features & Split Data (Support vs Query)...")
+    print("\n🚀 Extracting Features & Split Data...")
     
     for label_idx, class_name in enumerate(classes):
         class_dir = os.path.join(DATA_ROOT, class_name)
@@ -141,13 +138,11 @@ def run_evaluation():
             print(f"⚠️  Skipping empty class: {class_name}")
             continue
             
-        # 데이터 분할 (앞의 N개는 Support, 나머지는 Query)
-        # 만약 영상이 3개 이하라면? -> 1개를 Support, 나머지를 Query로 강제 조정
+        # 데이터가 너무 적을 경우 처리
         cur_n_support = N_SUPPORT
         if len(video_files) <= N_SUPPORT:
-            cur_n_support = 1
-            print(f"⚠️  {class_name}: Not enough videos. Using 1 for support.")
-
+            cur_n_support = 1 # 영상이 적으면 1개만 Support로 쓰고 나머진 Query로
+            
         s_files = video_files[:cur_n_support]
         q_files = video_files[cur_n_support:]
         
@@ -160,10 +155,8 @@ def run_evaluation():
             tensor = tensor.to(DEVICE)
             
             with torch.no_grad():
-                # Encoder (Video -> Frame Features)
-                f_feat = encoder(tensor) # [1, T, 768]
-                # Time Model (Frame Features -> Video Vector)
-                vid_emb = time_model(f_feat) # [1, 768]
+                f_feat = encoder(tensor) # [1, T, 512]
+                vid_emb = time_model(f_feat) # [1, 512]
                 
             support_embs.append(vid_emb.cpu())
             support_lbls.append(label_idx)
@@ -181,11 +174,15 @@ def run_evaluation():
             query_embs.append(vid_emb.cpu())
             query_lbls.append(label_idx)
 
+    if len(query_lbls) == 0:
+        print("❌ 평가할 Query 데이터가 없습니다.")
+        return
+
     # 리스트 -> 텐서 변환
     S = torch.cat(support_embs).to(DEVICE) # [Total_Support, Dim]
     S_Y = torch.tensor(support_lbls).to(DEVICE)
     Q = torch.cat(query_embs).to(DEVICE)   # [Total_Query, Dim]
-    Q_Y = np.array(query_lbls)             # Metric 계산용 (numpy)
+    Q_Y = np.array(query_lbls)             
 
     # ==========================================
     # 4. ProtoNet 거리 계산 및 분류
@@ -194,18 +191,16 @@ def run_evaluation():
     
     # (1) 프로토타입 계산
     num_classes = len(classes)
-    prototypes = classifier.compute_prototypes(S, S_Y, num_classes) # [N_Class, Dim]
+    prototypes = classifier.compute_prototypes(S, S_Y, num_classes) 
     
-    # (2) 거리 계산 (Query vs Prototypes)
-    # Output: [N_Query, N_Classes]
+    # (2) 거리 계산
     dists = classifier.euclidean_distance(Q, prototypes)
     
-    # (3) 예측 (거리가 가장 짧은 클래스 선택)
-    # dists가 작을수록 좋음 -> argmin
+    # (3) 예측
     predictions = torch.argmin(dists, dim=1).cpu().numpy()
     
     # ==========================================
-    # 5. 결과 시각화 및 저장
+    # 5. 결과 시각화
     # ==========================================
     acc = accuracy_score(Q_Y, predictions)
     print(f"\n🏆 Final Accuracy: {acc * 100:.2f}%")
