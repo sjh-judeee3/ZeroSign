@@ -15,6 +15,11 @@
 # .tar.gz
 # .rar
 
+# eval data
+eval_data/
+eval_data_resized/
+
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]
