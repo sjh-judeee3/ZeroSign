@@ -1,3 +1,9 @@
+"""
+eval.py
+
+evaluate our model with eval dataset
+"""
+
 import torch
 import torch.nn as nn
 import numpy as np
@@ -21,7 +27,7 @@ except ImportError:
 
 # --- [설정] ---
 DATA_ROOT = "eval_data_resized"       # 전처리된 데이터 폴더
-CHECKPOINT_PATH = "checkpoints/slip_protonet_final.pth" # 학습된 가중치 경로
+CHECKPOINT_PATH = "./checkpoint/slip_protonet_final.pth" # 학습된 가중치 경로
 N_SUPPORT = 3                         # 클래스당 기준 영상 개수
 NUM_FRAMES = 16                       # 학습 때 사용한 프레임 수
 EMBED_DIM = 512                       # train.py의 embed_dim과 일치해야 함
