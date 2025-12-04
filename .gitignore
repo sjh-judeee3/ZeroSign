@@ -21,7 +21,7 @@ eval_data_resized/
 test_run.py
 
 *.pth
-
+openai.txt
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
