@@ -39,6 +39,7 @@ def create_prototypes():
     class_embeddings = {} # { "안녕하세요": [tensor1, tensor2...], "감사합니다": [...] }
     
     MAX_SAMPLES_PER_CLASS=10
+    unique_classes = set()
     print(f"📊 전체 데이터 임베딩 추출 중... (클래스별 최대 {MAX_SAMPLES_PER_CLASS}개 제한 적용)")
     with torch.no_grad():
         for i in tqdm(range(len(dataset))):
@@ -48,6 +49,7 @@ def create_prototypes():
                 # 라벨 이름 추출 (JSON 파싱)
                 with open(label_path, 'r', encoding='utf-8') as f:
                     label_name = json.load(f)['data'][0]['attributes'][0]['name']
+                unique_classes.add(label_name)
                 
                 if label_name in class_embeddings and len(class_embeddings[label_name]) >= MAX_SAMPLES_PER_CLASS:
                     continue
@@ -62,6 +64,16 @@ def create_prototypes():
                 class_embeddings[label_name].append(emb.cpu()) # CPU로 내려서 저장 (메모리 절약)
             except Exception as e:
                 continue
+            all_classes_are_full = True
+            for name in unique_classes:
+                # 아직 이 클래스가 class_embeddings에 없거나, 샘플 수가 10개 미만이면
+                if name not in class_embeddings or len(class_embeddings[name]) < MAX_SAMPLES_PER_CLASS:
+                    all_classes_are_full = False
+                    break
+            # 모든 클래스가 10개 이상 모였다면 루프를 종료
+            if all_classes_are_full and len(unique_classes) > 0:
+                 print("\n🎉 모든 클래스가 최소 샘플 수를 충족했습니다. 프로토타입 생성 루프를 종료합니다.")
+                 break
 
     # 4. 평균(Prototype) 계산
     prototypes = {}
