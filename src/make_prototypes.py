@@ -38,7 +38,8 @@ def create_prototypes():
     # 3. 클래스별 임베딩 모으기
     class_embeddings = {} # { "안녕하세요": [tensor1, tensor2...], "감사합니다": [...] }
     
-    print("📊 전체 데이터 임베딩 추출 중...")
+    MAX_SAMPLES_PER_CLASS=10
+    print(f"📊 전체 데이터 임베딩 추출 중... (클래스별 최대 {MAX_SAMPLES_PER_CLASS}개 제한 적용)")
     with torch.no_grad():
         for i in tqdm(range(len(dataset))):
             try:
@@ -48,6 +49,8 @@ def create_prototypes():
                 with open(label_path, 'r', encoding='utf-8') as f:
                     label_name = json.load(f)['data'][0]['attributes'][0]['name']
                 
+                if label_name in class_embeddings and len(class_embeddings[label_name]) >= MAX_SAMPLES_PER_CLASS:
+                    continue
                 img = img.unsqueeze(0).to(DEVICE) # (1, T, C, H, W)
                 
                 # 특징 추출
